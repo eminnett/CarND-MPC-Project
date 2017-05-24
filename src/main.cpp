@@ -85,25 +85,84 @@ int main() {
         string event = j[0].get<string>();
         if (event == "telemetry") {
           // j[1] is the data JSON object
-          vector<double> ptsx = j[1]["ptsx"];
-          vector<double> ptsy = j[1]["ptsy"];
-          double px = j[1]["x"];
-          double py = j[1]["y"];
-          double psi = j[1]["psi"];
-          double v = j[1]["speed"];
+          vector<double> ptsx   = j[1]["ptsx"];
+          vector<double> ptsy   = j[1]["ptsy"];
+          double px             = j[1]["x"];
+          double py             = j[1]["y"];
+          double psi            = j[1]["psi"];
+          double v              = j[1]["speed"];
+          double steer_value    = j[1]["steering_angle"];
+          double throttle_value = j[1]["throttle"];
 
-          /*
-          * TODO: Calculate steeering angle and throttle using MPC.
-          *
-          * Both are in between [-1, 1].
-          *
-          */
-          double steer_value;
-          double throttle_value;
+          // Transform the coordinate space.
+          double x_rotation = cos(-psi);
+          double y_rotation = sin(-psi);
+          for (int i = 0; i < ptsx.size(); i++) {
+
+            double x_transaltion = ptsx[i] - px;
+            double y_translation = ptsy[i] - py;
+
+            ptsx[i] = x_transaltion * x_rotation - y_translation * y_rotation;
+            ptsy[i] = x_transaltion * y_rotation + y_translation * x_rotation;
+          }
+
+          const int n_x = 6; // The size of the state vector.
+
+          // This method of mapping a standard vector to an Eigen vector was
+          // found here: https://forum.kde.org/viewtopic.php?f=74&t=94839#p194926
+          Eigen::Map<Eigen::VectorXd> ptsx_vector(&ptsx[0], n_x);
+          Eigen::Map<Eigen::VectorXd> ptsy_vector(&ptsy[0], n_x);
+
+          // Fit the waypoints to a third degree polynomial.
+          auto fit_coefficients = polyfit(ptsx_vector, ptsy_vector, 3);
+          // Calculate the cross track and orientation errors from the polynomial fit.
+          double cte            = polyeval(fit_coefficients, 0);
+          double epsilon_psi    = -atan(fit_coefficients[1]);
+
+          Eigen::VectorXd state(n_x);
+
+          // The vehicle state using the vehicles reference frame.
+          state << 0, 0, 0, v, cte, epsilon_psi;
+
+          // Pass the polynomial fit and vehicle state into the MPC to determine
+          // the control solution. The solution will be the control inputs that
+          // minimise the cost function given the vehicle state and third degree
+          // polynomial that describes the desired path of the vehicle.
+          auto mpc_solution = mpc.Solve(state, fit_coefficients);
+
+
+          // Extract the first set of points of the plynomial fit so they can be
+          // drawn in the simulator.
+          vector<double> next_x_vector;
+          vector<double> next_y_vector;
+
+          const int num_points = 20;
+          const int distance_between_points = 5;
+          for (int i = 1; i < num_points; i++) {
+            double point_x = distance_between_points * i;
+            double point_y = polyeval(fit_coefficients, distance_between_points * i);
+            next_x_vector.push_back(point_x);
+            next_y_vector.push_back(point_y);
+          }
+
+          // Extract points for the MPC solution so they can be darwn
+          // in the simulator.
+          vector<double> mpc_x_vector;
+          vector<double> mpc_y_vector;
+
+          for (int i = 2; i < mpc_solution.size() - 1; i += 2) {
+            mpc_x_vector.push_back(mpc_solution[i]);
+            mpc_y_vector.push_back(mpc_solution[i + 1]);
+          }
 
           json msgJson;
-          msgJson["steering_angle"] = steer_value;
-          msgJson["throttle"] = throttle_value;
+          msgJson["steering_angle"] = mpc_solution[0];
+          msgJson["throttle"]       = mpc_solution[1];
+          msgJson["next_x"]         = next_x_vector;
+          msgJson["next_y"]         = next_y_vector;
+          msgJson["mpc_x"]          = mpc_x_vector;
+          msgJson["mpc_y"]          = mpc_y_vector;
+
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
           std::cout << msg << std::endl;
           // Latency
