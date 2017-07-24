@@ -91,8 +91,6 @@ int main() {
           double py             = j[1]["y"];
           double psi            = j[1]["psi"];
           double v              = j[1]["speed"];
-          double steer_value    = j[1]["steering_angle"];
-          double throttle_value = j[1]["throttle"];
 
           // Transform the coordinate space.
           double x_rotation = cos(-psi);
